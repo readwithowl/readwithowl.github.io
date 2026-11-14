@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OWL</title>
+<meta name="description" content="One Word Literature: classic stories one word at a time, with human narration and scored editions.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23000'/%3E%3Ccircle cx='21' cy='30' r='11' fill='none' stroke='%23fff' stroke-width='5'/%3E%3Ccircle cx='43' cy='30' r='11' fill='none' stroke='%23fff' stroke-width='5'/%3E%3Ccircle cx='43' cy='30' r='4' fill='%23ffb347'/%3E%3Cpath d='M28 46l4 6 4-6' fill='none' stroke='%23fff' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main>
+  <section id="home" class="screen">
+    <header><h1>OWL</h1><p>One Word Literature</p></header>
+    <div id="shelf" class="list"></div>
+    <button class="row quiet" data-nav data-go="settings"><b>Settings</b><span id="setSummary"></span></button>
+  </section>
+
+  <section id="read" class="screen" hidden>
+    <div class="top"><span id="badge"></span><span id="who"></span></div>
+    <div id="plate" hidden><small id="plateNum"></small><strong id="plateTitle"></strong></div>
+    <div id="word" class="word" aria-live="off"></div>
+    <div id="walk" hidden></div>
+    <div class="bottom">
+      <div class="bar"><i id="prog"></i></div>
+      <div id="status"></div>
+    </div>
+    <div id="toast" hidden></div>
+  </section>
+
+  <section id="settings" class="screen" hidden>
+    <header><h2>Settings</h2></header>
+    <div id="rows" class="list"></div>
+    <p class="help">Reading: pinch to play or pause · up and down change speed · left and right skip a sentence</p>
+  </section>
+</main>
+</body>
+</html>
