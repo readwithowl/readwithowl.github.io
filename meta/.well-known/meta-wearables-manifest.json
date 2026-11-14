@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "OWL",
-  "description": "Classic stories one word at a time, with human narration and scored editions.",
+  "description": "Great stories one word at a time, with human narration and scored editions.",
   "appearance": {
     "theme_color": "#C77A1E",
     "icon": { "src": "../icon.png" }
