@@ -11,7 +11,7 @@ const S = Object.assign({ wpm: 300, chunk: 1, mode: "narrator", sound: true, wal
 const places = store.get("owl.places", {});
 const MODES = { narrator: "Narrator", dramatic: "Dramatic", natural: "Natural" };
 
-let shelf = [], book = null, tokens = [], nwpm = 175, lastAt = 0, savedAt = 0, fresh = true, jumped = false;
+let lib = { genres: [], books: {} }, genre = null, book = null, chap = 0, tokens = [], nwpm = 175, lastAt = 0, savedAt = 0, fresh = true, jumped = false;
 const reader = new Player(), intro = new Player();
 let introQ = [], introing = false;
 
@@ -30,15 +30,21 @@ reader.msFor = f => voiceOn() && !voice.paused && f.t1 != null
   ? Math.max(f.blank ? 0 : 90, (f.t1 - voice.currentTime) / voice.playbackRate * 1000) : f.ms;
 
 // ---------- screens + Back ----------
+const SCREENS = ["home", "genre", "read", "settings"];
 function show(name, push) {
-  for (const s of ["home", "read", "settings"]) $(s).hidden = s !== name;
-  if (push) history.pushState({ s: name }, "");
+  for (const s of SCREENS) $(s).hidden = s !== name;
+  if (push) history.pushState({ s: name, g: genre && genre.id }, "");
   if (name !== "read") leaveReader();
   if (name === "home") renderShelf();
+  if (name === "genre") renderGenre();
   if (name === "settings") renderRows();
 }
-addEventListener("popstate", e => show((e.state && e.state.s) || "home"));
-const screen = () => ["home", "read", "settings"].find(s => !$(s).hidden);
+addEventListener("popstate", e => {
+  const st = e.state || {};
+  if (st.g) genre = lib.genres.find(g => g.id === st.g) || genre;
+  show(st.s || "home");
+});
+const screen = () => SCREENS.find(s => !$(s).hidden);
 const navs = () => [...document.querySelectorAll(`#${screen()} [data-nav]`)];
 // coming back, focus returns to whatever opened the screen you left (the book, or Settings)
 let returnTo = null;
@@ -59,18 +65,42 @@ addEventListener("keydown", e => {
 // ---------- home ----------
 async function boot() {
   history.replaceState({ s: "home" }, "");
-  try { shelf = await (await fetch(BOOKS + "shelf.json")).json(); } catch { shelf = []; }
+  try {
+    lib = await (await fetch(BOOKS + "library.json")).json();
+    const month = new Date().getMonth() + 1;   // seasonal shelves (Christmas) show only in season, at the top
+    lib.genres = lib.genres.filter(g => !g.season || g.season.includes(month)).sort((a, b) => !!b.season - !!a.season);
+  } catch { lib = { genres: [], books: {} }; }
   show("home");
 }
+// reading time at your speed: "12 min", "3 h 20 min"
+function mins(words) {
+  const m = Math.max(1, Math.round(words / S.wpm));
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 function renderShelf() {
-  $("shelf").innerHTML = shelf.length ? shelf.map(b => {
-    const pl = places[b.id], tags = [b.credit ? b.credit.replace(/^Narration: (.*?),.*/, "Read by $1") : b.narrator && "Narrator", b.cast && "Full cast"].filter(Boolean).join(" · ");
-    return `<button class="row" data-nav data-book="${b.id}"><b>${b.title}</b><span>${b.author}${tags ? " · " + tags : ""}${pl && pl.pct ? ` · ${pl.pct}% read` : ""}</span></button>`;
-  }).join("") : `<p class="help">The library couldn't load. Check your connection, then reopen OWL.</p>`;
+  const last = Object.entries(places).filter(([id, pl]) => lib.books[id] && pl.pct < 100).sort((a, b) => b[1].at - a[1].at)[0];
+  const cont = last ? `<button class="row" data-nav data-book="${last[0]}"><b>Continue: ${esc(lib.books[last[0]].title)}</b><span>${last[1].pct}% read</span></button>` : "";
+  $("shelf").innerHTML = lib.genres.length ? cont + lib.genres.map(g =>
+    `<button class="row" data-nav data-genre="${g.id}"><b>${esc(g.name)}</b><span>${g.books.length} ${g.books.length === 1 ? "story" : "stories"}</span></button>`).join("")
+    : `<p class="help">The library couldn't load. Check your connection, then reopen OWL.</p>`;
   $("setSummary").textContent = `${MODES[S.mode]} · ${S.wpm} wpm`;
   focusFirst();
 }
+function renderGenre() {
+  if (!genre) return show("home");
+  $("genreName").textContent = genre.name;
+  $("books").innerHTML = genre.books.map(id => {
+    const b = lib.books[id], pl = places[id];
+    const tags = [b.credit ? b.credit.replace(/^Narration: (.*?),.*/, "Read by $1") : b.narrator && "Narrator", b.cast && "Full cast",
+      b.chapters && `${b.chapters} chapters`, mins(b.words), pl && pl.pct && `${pl.pct}% read`].filter(Boolean).join(" · ");
+    return `<button class="row" data-nav data-book="${id}"><b>${esc(b.title)}</b><span>${esc(b.author)} · ${tags}</span></button>`;
+  }).join("");
+  focusFirst();
+}
 document.addEventListener("click", e => {
+  const gn = e.target.closest("[data-genre]");
+  if (gn) { returnTo = `[data-genre="${gn.dataset.genre}"]`; genre = lib.genres.find(g => g.id === gn.dataset.genre); return show("genre", true); }
   const b = e.target.closest("[data-book]"); if (b) { returnTo = `[data-book="${b.dataset.book}"]`; return openBook(b.dataset.book); }
   const g = e.target.closest("[data-go]"); if (g) { returnTo = `[data-go="${g.dataset.go}"]`; return show(g.dataset.go, true); }
   const c = e.target.closest("[data-cycle]"); if (c) return cycle(c.dataset.cycle, 1);
@@ -100,24 +130,54 @@ function cycle(k, dir) {
 
 // ---------- reader ----------
 const opts = () => ({ wpm: S.wpm, chunk: S.chunk, mode: S.mode });
+// The two original editions sit in books/; the library's books in books/lib/, novels one chapter per file.
 async function openBook(id) {
-  try { book = await (await fetch(BOOKS + id + ".json")).json(); } catch { return toastHome("That book couldn't load. Try again."); }
-  tokens = loadTokens(book); nwpm = narratorWpm(book);
-  voice.src = book.audio ? BOOKS + book.audio : ""; voiceFailed = false;
-  reader.load(tokens, opts(), nwpm);
+  const info = lib.books[id];
+  let b;
+  try { b = await (await fetch(BOOKS + (info && info.file ? info.file : `lib/${id}.json`))).json(); } catch { return toastHome("That book couldn't load. Try again."); }
   const pl = places[id];
+  book = b;
+  if (!(await loadChapter(pl && pl.ch || 1))) { book = null; return toastHome("That book couldn't load. Try again."); }
   if (pl && pl.p < tokens.length) reader.seek(pl.p);
   lastAt = pl ? pl.at : 0; fresh = true; jumped = false;
   show("read", true);
   hint();
+}
+// loads chapter n (or the whole story), with a title plate at the start of each chapter
+async function loadChapter(n) {
+  let src = book.src;
+  if (book.chapters) {
+    n = Math.max(1, Math.min(book.chapters.length, n));
+    try { src = (await (await fetch(`${BOOKS}lib/${book.id}/${n}.json`)).json()).src; } catch { return false; }
+  }
+  chap = book.chapters ? n : 0;
+  tokens = loadTokens({ ...book, src }); nwpm = narratorWpm(book);
+  if (chap && tokens[0] && !tokens[0].scene) tokens[0].scene = { title: book.chapters[n - 1].title || `Chapter ${n}`, recap: "", n: 1, chapter: n };
+  voice.src = book.audio ? BOOKS + book.audio : ""; voiceFailed = false;
+  reader.load(tokens, opts(), nwpm);
+  return true;
 }
 function toastHome(msg) { $("setSummary").textContent = msg; }
 
 function savePlace() {
   if (!book) return;
   savedAt = lastAt = Date.now();
-  places[book.id] = { p: reader.pos(), at: lastAt, pct: Math.round(100 * reader.pos() / tokens.length) };
+  places[book.id] = { p: reader.pos(), ch: chap || undefined, at: lastAt, pct: Math.min(100, Math.round(100 * progress())) };
   store.set("owl.places", places);
+}
+// whole-book progress, 0..1: words in earlier chapters, plus this chapter so far
+function progress() {
+  const here = Math.min(reader.pos(), tokens.length) / (tokens.length || 1);
+  if (!chap) return here;
+  const ws = book.chapters.map(c => c.words), total = ws.reduce((a, b) => a + b, 0);
+  return (ws.slice(0, chap - 1).reduce((a, b) => a + b, 0) + ws[chap - 1] * here) / total;
+}
+async function gotoChapter(n, play) {
+  if (!chap || n < 1 || n > book.chapters.length) return false;
+  if (!(await loadChapter(n))) { toast("That chapter couldn't load"); return false; }
+  savePlace();
+  if (play) reader.play(); else hint();
+  return true;
 }
 function leaveReader() {
   if (!book) return;
@@ -133,7 +193,10 @@ function readerKey(e) {
   else if (k === "ArrowUp" || k === "ArrowDown") { e.preventDefault(); speed(k === "ArrowUp" ? 25 : -25); }
   else if (k === "ArrowLeft" || k === "ArrowRight") {
     e.preventDefault();
-    const p = reader.pos(), [s, end] = bounds(tokens, Math.min(p, tokens.length - 1));
+    const p = reader.pos(), [s, end] = bounds(tokens, Math.min(p, tokens.length - 1)), playing = reader.playing;
+    // at either end of a chapter, left and right step to the neighbouring chapter
+    if (k === "ArrowLeft" && p <= 1 && chap > 1) return gotoChapter(chap - 1, playing);
+    if (k === "ArrowRight" && end >= tokens.length && chap && chap < book.chapters.length) return gotoChapter(chap + 1, playing);
     reader.seek(k === "ArrowLeft" ? (p - s <= 1 && s > 0 ? bounds(tokens, s - 1)[0] : s) : end);
   }
 }
@@ -178,7 +241,10 @@ function endIntro(go) {
 function drawWord(f, extra = "") {
   const w = $("word");
   $("plate").hidden = !(f && f.plate);
-  if (f && f.plate) { $("plateNum").textContent = "Scene " + f.plate.n; $("plateTitle").textContent = f.plate.title; }
+  if (f && f.plate) {
+    $("plateNum").textContent = f.plate.chapter ? `${f.plate.chapter} of ${book.chapters.length}` : /^Part /.test(f.plate.title) || chap ? "" : "Scene " + f.plate.n;
+    $("plateTitle").textContent = f.plate.title;
+  }
   if (!f || f.blank || f.plate) { w.className = "word"; w.innerHTML = ""; return; }
   const { l, p, r } = pivot(f), cn = castN(f.who);
   w.className = "word" + (f.emph ? " emph" : "") + (f.end - f.start > 1 ? " chunk" : "") + (cn ? " c" + cn : "") + extra;
@@ -206,15 +272,23 @@ reader.onFrame = (f, r) => {
   // labels
   const cn = f && !f.plate && !f.blank ? castN(f.who) : 0;
   $("who").textContent = cn ? book.cast[f.who] : ""; $("who").className = cn ? "c" + cn : "";
-  $("prog").style.width = (100 * Math.min(p, n) / n).toFixed(1) + "%";
-  if (r.playing) { $("status").textContent = walking && voiceOn() ? "" : `${S.wpm} wpm · ${MODES[S.mode]}`; return; }
+  $("prog").style.width = (100 * progress()).toFixed(1) + "%";
+  if (r.playing) { $("status").textContent = walking && voiceOn() ? "" : `${S.wpm} wpm · ${modeName()}`; return; }
   if (p >= n) { $("status").textContent = "The end · pinch to start over"; return; }
   hint();
 };
-reader.onEnd = () => { savePlace(); voice.pause(); score && score.off(); };
+// a chapter's end rolls straight into the next one
+reader.onEnd = async () => {
+  if (chap && chap < book.chapters.length && await gotoChapter(chap + 1, true)) return;
+  savePlace(); voice.pause(); score && score.off();
+};
+// narrator timing on a book with no recording reads as Natural
+const modeName = () => S.mode === "narrator" && !(tokens[0] && tokens[0].n) ? MODES.natural : MODES[S.mode];
 function hint() {
   const sc = sceneAt(tokens, reader.pos());
-  $("status").textContent = `${sc ? `Scene ${sc.n}: ${sc.title}` : book.title} · pinch to read`;
+  const where = chap ? book.chapters[chap - 1].title || `Chapter ${chap}`
+    : sc && !/^Part /.test(sc.title) && book.id in { poe: 1, holmes: 1 } ? `Scene ${sc.n}: ${sc.title}` : book.title;
+  $("status").textContent = `${where} · pinch to read`;
 }
 
 // ---------- walking: words step aside, the narrator keeps going ----------
